@@ -7,6 +7,8 @@ graphs/
 # CSV de splits (gerado pelo pipeline)
 splits_dataset.csv
 
+outputs/models/
+
 # Python
 __pycache__/
 *.pyc
