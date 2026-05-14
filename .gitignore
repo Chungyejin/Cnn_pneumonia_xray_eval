@@ -7,7 +7,16 @@ graphs/
 # CSV de splits (gerado pelo pipeline)
 splits_dataset.csv
 
-outputs/models/
+# Ignorar tudo dentro de outputs
+outputs/*
+
+# Exceto estas pastas
+!outputs/graphs/
+!outputs/logs/
+
+# Permitir arquivos dentro delas
+!outputs/graphs/**
+!outputs/logs/**
 
 # Python
 __pycache__/
