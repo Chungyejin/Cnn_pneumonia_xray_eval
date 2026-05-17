@@ -9,10 +9,15 @@ import pandas as pd
 import tensorflow as tf
 
 from tensorflow.keras import Model
-from tensorflow.keras.layers import GlobalAveragePooling2D, Dense, Dropout, BatchNormalization
+from tensorflow.keras.layers import (Input, GlobalAveragePooling2D, Dense,
+                                     Dropout, BatchNormalization, Layer)
 from tensorflow.keras.applications import ResNet50V2, DenseNet121, EfficientNetB0
+from tensorflow.keras.applications.resnet_v2    import preprocess_input as resnet_v2_preprocess
+from tensorflow.keras.applications.densenet     import preprocess_input as densenet_preprocess
+from tensorflow.keras.applications.efficientnet import preprocess_input as effnet_preprocess
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint, CSVLogger
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.utils import register_keras_serializable
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import (accuracy_score, precision_score, recall_score,
                               f1_score, classification_report)
@@ -44,15 +49,68 @@ for d in [MODELS_DIR, LOGS_DIR]:
     os.makedirs(d, exist_ok=True)
 
 
+# Architecture-specific preprocessing
+#
+# Each Keras Applications model expects a different input scale:
+#   - ResNet50V2     : preprocess_input rescales pixels from [0, 255] → [-1, 1].
+#   - DenseNet121    : preprocess_input applies ImageNet mean/std normalization.
+#   - EfficientNetB0 : has an internal Normalization layer expecting [0, 255]
+#                      (its preprocess_input is essentially a no-op).
+#
+# The previous pipeline applied a single `rescale=1./255` to all of them in the
+# ImageDataGenerator. That double-normalized EfficientNet (killing its gradients
+# and producing chance-level metrics) and used the wrong scale for ResNet/DenseNet.
+#
+# Solution: feed the generator raw images in [0, 255] and apply the architecture's
+# own preprocess_input as a layer INSIDE the model. This way the same generator
+# can be reused across all three architectures, and the saved model carries its
+# own preprocessing graph (safer for deployment).
+
+@register_keras_serializable(package='pneumonia')
+class ArchPreprocessing(Layer):
+    """
+    Wraps the per-architecture preprocess_input as a serializable Keras layer.
+
+    Using a registered Layer (instead of a Lambda) ensures that
+    `tf.keras.models.load_model` can rebuild the model without needing the
+    caller to pass `custom_objects`.
+    """
+
+    _FUNCS = {
+        'resnet50v2'    : resnet_v2_preprocess,
+        'densenet121'   : densenet_preprocess,
+        'efficientnetb0': effnet_preprocess,
+    }
+
+    def __init__(self, arch: str, **kwargs):
+        super().__init__(**kwargs)
+        if arch not in self._FUNCS:
+            raise ValueError(f"Unknown architecture '{arch}'. "
+                             f"Choose from: {list(self._FUNCS)}")
+        self.arch = arch
+
+    def call(self, inputs):
+        return self._FUNCS[self.arch](inputs)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({'arch': self.arch})
+        return config
+
+
 # Model
 
 def build_model(arch: str, freeze_base: bool = True) -> tuple:
     """
     Builds and returns the full model and a direct reference to the backbone.
 
+    Architecture-specific preprocessing (preprocess_input) is applied as the
+    first layer of the model. This means the generator must feed raw pixel
+    values in [0, 255] — do NOT use `rescale=1./255` in the ImageDataGenerator.
+
     Returns
     -------
-    model : tf.keras.Model  — full model (backbone + custom head)
+    model : tf.keras.Model  — full model (preprocessing + backbone + custom head)
     base  : tf.keras.Model  — backbone only (used later for unfreezing)
     """
     kwargs = dict(include_top=False, weights='imagenet', input_shape=(*TARGET_SIZE, 3))
@@ -61,18 +119,23 @@ def build_model(arch: str, freeze_base: bool = True) -> tuple:
     if arch not in bases:
         raise ValueError(f"Unknown architecture '{arch}'. Choose from: {list(bases)}")
 
+    # Build the backbone separately so we can keep a direct reference for unfreezing.
     base           = bases[arch](**kwargs)
     base.trainable = not freeze_base
 
-    x   = GlobalAveragePooling2D()(base.output)
-    x   = BatchNormalization()(x)
-    x   = Dense(256, activation='relu')(x)
-    x   = Dropout(0.4)(x)
-    x   = Dense(128, activation='relu')(x)
-    x   = Dropout(0.3)(x)
-    out = Dense(1, activation='sigmoid')(x)
+    # Functional pipeline: Input → arch-specific preprocess → backbone → head
+    inputs = Input(shape=(*TARGET_SIZE, 3), name='input_image')
+    x      = ArchPreprocessing(arch, name=f'preprocess_{arch}')(inputs)
+    x      = base(x)
+    x      = GlobalAveragePooling2D()(x)
+    x      = BatchNormalization()(x)
+    x      = Dense(256, activation='relu')(x)
+    x      = Dropout(0.4)(x)
+    x      = Dense(128, activation='relu')(x)
+    x      = Dropout(0.3)(x)
+    out    = Dense(1, activation='sigmoid')(x)
 
-    model = Model(inputs=base.input, outputs=out, name=arch)
+    model = Model(inputs=inputs, outputs=out, name=arch)
     return model, base  # return both so base can be used directly in unfreeze
 
 

@@ -369,12 +369,18 @@ class DataPipeline:
         """
         Defines two generators:
         - train_datagen    : random transformations for training diversity.
-        - val_test_datagen : normalization only, for deterministic evaluation.
+        - val_test_datagen : pass-through, for deterministic evaluation.
+
+        Note on normalization:
+            These generators yield raw pixel values in [0, 255]. Architecture-
+            specific normalization (preprocess_input for ResNet/DenseNet/
+            EfficientNet) is applied INSIDE the model via the ArchPreprocessing
+            layer — see training.py::build_model. Do not add `rescale=1./255`
+            here; that would double-normalize and break EfficientNet entirely.
         """
         print("\nConfiguring Data Augmentation...")
 
         self.train_datagen = ImageDataGenerator(
-            rescale            = 1./255,
             rotation_range     = 15,
             width_shift_range  = 0.05,
             height_shift_range = 0.05,
@@ -384,7 +390,7 @@ class DataPipeline:
             fill_mode          = 'nearest'
         )
 
-        self.val_test_datagen = ImageDataGenerator(rescale=1./255)
+        self.val_test_datagen = ImageDataGenerator()
 
     def _plot_augmentation(self):
         """
