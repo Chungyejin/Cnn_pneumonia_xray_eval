@@ -1,0 +1,38 @@
+[
+  {
+    "fold": -1,
+    "arch": "resnet50v2",
+    "accuracy": 0.8137755102040817,
+    "precision_macro": 0.8209985315712188,
+    "recall_macro": 0.8130011454753723,
+    "f1_macro": 0.8124463378666229,
+    "precision_weighted": 0.8205325301926938,
+    "recall_weighted": 0.8137755102040817,
+    "f1_weighted": 0.8126074496651028,
+    "split": "test"
+  },
+  {
+    "fold": -1,
+    "arch": "densenet121",
+    "accuracy": 0.826530612244898,
+    "precision_macro": 0.8301170515659602,
+    "recall_macro": 0.8259918775382693,
+    "f1_macro": 0.8258779264214047,
+    "precision_weighted": 0.8297910116276817,
+    "recall_weighted": 0.826530612244898,
+    "f1_weighted": 0.8259867073919869,
+    "split": "test"
+  },
+  {
+    "fold": -1,
+    "arch": "efficientnetb0",
+    "accuracy": 0.8316326530612245,
+    "precision_macro": 0.8387887834523937,
+    "recall_macro": 0.8308861814016453,
+    "f1_macro": 0.830503144654088,
+    "precision_weighted": 0.8383117080929823,
+    "recall_weighted": 0.8316326530612245,
+    "f1_weighted": 0.8306443332049801,
+    "split": "test"
+  }
+]

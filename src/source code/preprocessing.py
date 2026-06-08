@@ -1,54 +1,36 @@
+# preprocessing.py — DataPipeline: load, EDA, clean, balance, split, datagens.
+# Contrato: datagens entregam [0,255] sem rescale; o modelo normaliza internamente.
+
 import os
-import numpy as np
-import pandas as pd
+from collections import Counter
+
 import cv2
 import matplotlib.pyplot as plt
-from collections import Counter
-from sklearn.model_selection import train_test_split, StratifiedKFold
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import StratifiedKFold, train_test_split
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 
 class DataPipeline:
-    """
-    Encapsulates the EDA and preprocessing steps for the pneumonia dataset.
-
-    Split strategy:
-        1. A fixed holdout test set is separated before any CV.
-           It never participates in training or validation — used
-           exclusively for the final unbiased model evaluation.
-        2. The remaining data is split via StratifiedKFold into K folds.
-           In each fold, (K-1) parts form the training set and 1 part forms
-           the validation set, ensuring every sample is validated exactly once.
-
-    Balancing:
-        Only the NORMAL class from ChestX-ray8 is sampled (~60k → configurable cap).
-        All other datasets are kept intact.
-        Residual class imbalance is handled via class_weight during training,
-        without discarding valid samples from other datasets.
-
-    Usage:
-        pipeline = DataPipeline(base_path='datasets')
-        pipeline.run()
-    """
 
     CLASSES = {'NORMAL', 'PNEUMONIA'}
     COLORS  = {'NORMAL': '#4CAF50', 'PNEUMONIA': '#F44336'}
 
-    def __init__(self, base_path='datasets', target_size=(224, 224),
-                 graphs_dir='graphs', random_state=42,
-                 chestxray8_normal_cap=5000,
-                 n_splits=5, test_size=0.15):
-        """
-        Parameters
-        ----------
-        base_path             : root directory of the datasets
-        target_size           : target image dimensions after resize (H, W)
-        graphs_dir            : output directory for plots
-        random_state          : global seed for reproducibility
-        chestxray8_normal_cap : cap on NORMAL samples from ChestX-ray8
-        n_splits              : number of StratifiedKFold folds
-        test_size             : fraction of the dataset reserved for the holdout test set
-        """
+    # Instância CLAHE compartilhada — evita recriar a cada imagem.
+    _CLAHE = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+    def __init__(
+        self,
+        base_path='datasets',
+        target_size=(224, 224),
+        graphs_dir='graphs',
+        random_state=42,
+        chestxray8_normal_cap=5000,
+        n_splits=5,
+        test_size=0.15,
+        skip_plots=False,
+    ):
         self.base_path             = base_path
         self.target_size           = target_size
         self.graphs_dir            = graphs_dir
@@ -56,54 +38,60 @@ class DataPipeline:
         self.chestxray8_normal_cap = chestxray8_normal_cap
         self.n_splits              = n_splits
         self.test_size             = test_size
+        self.skip_plots            = skip_plots
 
-        self.df               = None
-        self.folds            = []
-        self.X_test           = None
-        self.y_test           = None
-        self.train_datagen    = None
-        self.val_test_datagen = None
-        self._sample_path     = None
+        self.df      = None
+        self.folds   = []
+        self.X_test  = None
+        self.y_test  = None
+
+        self._sample_path = None  # imagem usada nos plots de exemplo
 
         os.makedirs(self.graphs_dir, exist_ok=True)
 
     def run(self):
-        """Runs the full pipeline in order."""
+        # skip_plots=True (debug) pula só os plots; load/clean/balance/split rodam normal.
         self._load_metadata()
-        self._overview()
-        self._plot_class_distribution(suffix='_original')
-        self._plot_dimension_distribution()
-        self._plot_visual_samples()
+        self._print_overview()
+
+        if not self.skip_plots:
+            self._plot_class_distribution(suffix='_original')
+            self._plot_dimension_distribution()
+            self._plot_visual_samples()
+
         self._remove_corrupted()
-        self._stratified_sample()
-        self._plot_class_distribution(suffix='_balanced')
-        self._plot_preprocessing()
-        self._configure_augmentation()
-        self._plot_augmentation()
+        self._cap_chestxray8_normal()
+
+        if not self.skip_plots:
+            self._plot_class_distribution(suffix='_balanced')
+
+        self._sample_path = self.df['path'].iloc[0]
+
+        if not self.skip_plots:
+            self._plot_preprocessing_example()
+            self._plot_equalization_example()
+            self._plot_augmentation_examples()
+
         self._split_kfold()
-        self._save_csv()
+        self._save_splits_csv()
 
-    # Loading
+    @staticmethod
+    def _safe_filename(name):
+        for char in (' ', '-', '(', ')', '[', ']'):
+            name = name.replace(char, '_')
+        return name
 
-    def _normalize_class(self, dir_name):
-        """
-        Unifies variations like 'NORMAL (1)' or 'PNEUMONIA_BACTERIAL'
-        into a single label. Returns None for intermediate directories.
-        """
-        u = dir_name.upper()
-        if 'PNEUMONIA' in u:
+    @staticmethod
+    def _normalize_class(dir_name):
+        upper = dir_name.upper()
+        if 'PNEUMONIA' in upper:
             return 'PNEUMONIA'
-        if 'NORMAL' in u:
+        if 'NORMAL' in upper:
             return 'NORMAL'
         return None
 
     def _load_metadata(self):
-        """
-        Recursively traverses datasets using os.walk, locating
-        NORMAL/PNEUMONIA folders at any level — compatible with
-        flat structures (chest_xray) and nested ones with multiple
-        intermediate subdirectories (ChestX-ray8 with timestamps).
-        """
+        # Lê dimensões na carga para detectar arquivos corrompidos aqui, não no treino.
         print("Loading metadata...")
         records = []
 
@@ -125,15 +113,19 @@ class DataPipeline:
                     img  = cv2.imread(path)
 
                     if img is None:
-                        height, width, channels = None, None, None
+                        height = width = channels = None
                     else:
                         height, width = img.shape[:2]
-                        channels      = img.shape[2] if len(img.shape) == 3 else 1
+                        channels      = img.shape[2] if img.ndim == 3 else 1
 
                     records.append({
-                        'dataset': dataset, 'label': label,
-                        'image': img_name, 'path': path,
-                        'height': height, 'width': width, 'channels': channels
+                        'dataset' : dataset,
+                        'label'   : label,
+                        'image'   : img_name,
+                        'path'    : path,
+                        'height'  : height,
+                        'width'   : width,
+                        'channels': channels,
                     })
 
         self.df = pd.DataFrame(records)
@@ -141,25 +133,19 @@ class DataPipeline:
         print(self.df.groupby(['dataset', 'label']).size()
                      .reset_index(name='count').to_string(index=False))
 
-    # EDA
-
-    def _overview(self):
+    def _print_overview(self):
         total = self.df.groupby('dataset').size().reset_index(name='total')
         dist  = self.df['label'].value_counts().reset_index()
         dist.columns = ['label', 'count']
 
         print("\nTotal per dataset:")
         print(total.to_string(index=False))
-        print("\nTotal per class (unified set):")
+        print("\nTotal per class:")
         print(dist.to_string(index=False))
-        print(f"\nTotal images   : {len(self.df)}")
-        print(f"Corrupted images: {self.df['height'].isna().sum()}")
+        print(f"\nTotal    : {len(self.df)}")
+        print(f"Corrupted: {self.df['height'].isna().sum()}")
 
     def _plot_class_distribution(self, suffix=''):
-        """
-        Generates a bar chart per dataset plus one for the unified set.
-        The suffix differentiates versions before/after sampling.
-        """
         print(f"\nPlotting class distribution{suffix}...")
         datasets = self.df['dataset'].unique()
         n        = len(datasets)
@@ -167,9 +153,7 @@ class DataPipeline:
         fig, axes = plt.subplots(1, n + 1, figsize=(6 * (n + 1), 5))
 
         for ax, ds in zip(axes[:n], datasets):
-            counts = self.df[self.df['dataset'] == ds]['label'].value_counts()
-            self._barplot(ax, counts, ds)
-
+            self._barplot(ax, self.df[self.df['dataset'] == ds]['label'].value_counts(), ds)
         self._barplot(axes[n], self.df['label'].value_counts(), 'UNIFIED SET')
 
         title = 'Class Distribution per Dataset + Unified Set'
@@ -183,7 +167,6 @@ class DataPipeline:
         plt.close()
 
     def _barplot(self, ax, counts, title):
-        """Helper to draw a bar plot with absolute counts and percentages."""
         bars  = ax.bar(counts.index, counts.values,
                        color=[self.COLORS[c] for c in counts.index],
                        edgecolor='black', linewidth=0.7)
@@ -201,13 +184,12 @@ class DataPipeline:
         ax.set_xticklabels([f'{c}\n({pct[c]}%)' for c in counts.index])
 
     def _plot_dimension_distribution(self):
-        """Histograms of height and width per dataset."""
         print("\nPlotting dimension distribution...")
         datasets  = self.df['dataset'].unique()
         fig, axes = plt.subplots(len(datasets), 2, figsize=(14, 4 * len(datasets)))
 
         for i, ds in enumerate(datasets):
-            df_t  = self.df[self.df['dataset'] == ds].dropna(subset=['height', 'width'])
+            df_ds = self.df[self.df['dataset'] == ds].dropna(subset=['height', 'width'])
             ax_h  = axes[i][0] if len(datasets) > 1 else axes[0]
             ax_w  = axes[i][1] if len(datasets) > 1 else axes[1]
 
@@ -215,19 +197,20 @@ class DataPipeline:
                 (ax_h, 'height', 'steelblue',  'Height'),
                 (ax_w, 'width',  'darkorange', 'Width'),
             ]:
-                ax.hist(df_t[col], bins=30, color=color, edgecolor='black', alpha=0.8)
+                ax.hist(df_ds[col], bins=30, color=color, edgecolor='black', alpha=0.8)
                 ax.set_title(f'[{ds}] {label}')
                 ax.set_xlabel('Pixels')
                 ax.set_ylabel('Frequency')
-                ax.axvline(df_t[col].mean(), color='red', linestyle='--',
-                           label=f"Mean: {df_t[col].mean():.0f}px")
+                ax.axvline(df_ds[col].mean(), color='red', linestyle='--',
+                           label=f"Mean: {df_ds[col].mean():.0f}px")
                 ax.legend()
 
             print(f"\n  {ds}")
             for col in ['height', 'width']:
+                s = df_ds[col]
                 print(f"   {col.capitalize():7} — "
-                      f"min: {df_t[col].min():.0f} | max: {df_t[col].max():.0f} | "
-                      f"mean: {df_t[col].mean():.1f} | median: {df_t[col].median():.0f}")
+                      f"min: {s.min():.0f} | max: {s.max():.0f} | "
+                      f"mean: {s.mean():.1f} | median: {s.median():.0f}")
 
         plt.tight_layout()
         plt.savefig(f'{self.graphs_dir}/dimension_distribution.png',
@@ -235,7 +218,6 @@ class DataPipeline:
         plt.close()
 
     def _plot_visual_samples(self):
-        """Displays a grid of random samples per dataset and class."""
         print("\nGenerating visual samples...")
         for ds in self.df['dataset'].unique():
             classes        = self.df[self.df['dataset'] == ds]['label'].unique()
@@ -263,158 +245,177 @@ class DataPipeline:
 
             plt.suptitle(f'Samples — {ds}', fontsize=14, fontweight='bold')
             plt.tight_layout()
-            plt.savefig(f'{self.graphs_dir}/samples_{ds.replace(" ", "_")}.png',
+            plt.savefig(f'{self.graphs_dir}/samples_{self._safe_filename(ds)}.png',
                         dpi=150, bbox_inches='tight')
             plt.close()
 
-    # Cleaning
-
     def _remove_corrupted(self):
-        """Removes images that OpenCV could not open (height == None)."""
         corrupted = self.df[self.df['height'].isna()]
         print(f"\nCorrupted images: {len(corrupted)}")
         if len(corrupted) > 0:
             print(corrupted[['dataset', 'label', 'image']].to_string(index=False))
             self.df = self.df[self.df['height'].notna()].reset_index(drop=True)
-            print(f"Removed. Remaining: {len(self.df)} images.")
+            print(f"Removed. Remaining: {len(self.df)}")
         else:
-            print("No corrupted images found.")
+            print("None found.")
 
-    # Stratified Sampling
+    def _cap_chestxray8_normal(self):
+        # Subamostra a classe NORMAL do ChestX-ray8 para não dominar o conjunto.
+        dataset, cls = 'ChestX-ray8', 'NORMAL'
+        mask         = (self.df['dataset'] == dataset) & (self.df['label'] == cls)
+        n_original   = mask.sum()
 
-    def _stratified_sample(self):
-        """
-        Samples only the NORMAL class from ChestX-ray8, which concentrates
-        ~60k images and would skew the unified dataset.
+        if n_original <= self.chestxray8_normal_cap:
+            print(f"\n[{dataset}] {cls}: {n_original} samples — below cap, kept as-is.")
+            return
 
-        All other datasets are kept intact, preserving their original class
-        distributions. Residual imbalance is handled via class_weight during training.
-        """
-        target_dataset = 'ChestX-ray8'
-        target_class   = 'NORMAL'
+        sampled_idx = (
+            self.df[mask]
+            .sample(self.chestxray8_normal_cap, random_state=self.random_state)
+            .index
+        )
+        self.df = (
+            pd.concat([self.df[~mask], self.df.loc[sampled_idx]])
+            .sample(frac=1, random_state=self.random_state)
+            .reset_index(drop=True)
+        )
 
-        mask       = (self.df['dataset'] == target_dataset) & (self.df['label'] == target_class)
-        n_original = mask.sum()
-
-        if n_original > self.chestxray8_normal_cap:
-            sampled_idx = (
-                self.df[mask]
-                .sample(self.chestxray8_normal_cap, random_state=self.random_state)
-                .index
-            )
-            self.df = pd.concat([
-                self.df[~mask],
-                self.df.loc[sampled_idx]
-            ]).sample(frac=1, random_state=self.random_state).reset_index(drop=True)
-
-            print(f"\nSampling: [{target_dataset}] {target_class} "
-                  f"{n_original} → {self.chestxray8_normal_cap} samples")
-        else:
-            print(f"\nSampling: [{target_dataset}] {target_class} "
-                  f"below cap ({n_original}), kept as-is.")
-
-        print(f"Final total: {len(self.df)} images")
+        print(f"\n[{dataset}] {cls}: {n_original} → {self.chestxray8_normal_cap} samples")
+        print(f"Final total: {len(self.df)}")
         print(self.df.groupby(['dataset', 'label']).size()
                      .reset_index(name='count').to_string(index=False))
 
-    # Preprocessing
-
-    def preprocess_image(self, path, normalize=True):
-        """
-        Reads, converts to RGB, resizes, and normalizes an image.
-        Returns a float32 np.ndarray with values in [0, 1].
-        """
+    def preprocess_image(self, path, normalize=True, equalization=None):
+        # Uso só em EDA/visualização. No treino os datagens entregam [0,255] crus.
+        # normalize=True -> float32 [0,1]; equalization: None | 'hist' | 'adaptive'.
         img = cv2.imread(path)
         if img is None:
             raise ValueError(f"Image not found: {path}")
 
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        if equalization is not None:
+            gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            if equalization == 'hist':
+                gray = cv2.equalizeHist(gray)
+            elif equalization == 'adaptive':
+                gray = self._CLAHE.apply(gray)
+            img = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+
         img = cv2.resize(img, (self.target_size[1], self.target_size[0]),
                          interpolation=cv2.INTER_AREA)
 
         if normalize:
-            img = img.astype(np.float32) / 255.0
-
+            return img.astype(np.float32) / 255.0
         return img
 
-    def _plot_preprocessing(self):
-        """Displays an image before and after preprocessing."""
-        print("\nDemonstrating preprocessing...")
-        self._sample_path = self.df['path'].iloc[0]
-        img_proc          = self.preprocess_image(self._sample_path)
-        img_orig          = cv2.cvtColor(cv2.imread(self._sample_path), cv2.COLOR_BGR2RGB)
+    def _apply_hist_equalization(self, img):
+        # preprocessing_function do datagen: recebe e retorna float32 [0,255].
+        img_u8 = np.clip(img, 0, 255).astype(np.uint8)
+        gray   = cv2.cvtColor(img_u8, cv2.COLOR_RGB2GRAY)
+        eq     = cv2.equalizeHist(gray)
+        return cv2.cvtColor(eq, cv2.COLOR_GRAY2RGB).astype(np.float32)
 
-        print(f"Shape  : {img_proc.shape}")
-        print(f"Min/Max: {img_proc.min():.4f} / {img_proc.max():.4f}")
-        print(f"Dtype  : {img_proc.dtype}")
+    def _apply_adaptive_equalization(self, img):
+        # Mesmo contrato do hist: [0,255] -> [0,255]; usa o CLAHE compartilhado.
+        img_u8 = np.clip(img, 0, 255).astype(np.uint8)
+        gray   = cv2.cvtColor(img_u8, cv2.COLOR_RGB2GRAY)
+        eq     = self._CLAHE.apply(gray)
+        return cv2.cvtColor(eq, cv2.COLOR_GRAY2RGB).astype(np.float32)
 
-        plt.figure(figsize=(10, 4))
-        plt.subplot(1, 2, 1)
-        plt.imshow(img_orig)
-        plt.title(f'Original\n{img_orig.shape[1]}×{img_orig.shape[0]}px')
-        plt.axis('off')
-        plt.subplot(1, 2, 2)
-        plt.imshow(img_proc)
-        plt.title(f'Preprocessed\n{self.target_size[1]}×{self.target_size[0]}px | [0,1]')
-        plt.axis('off')
-        plt.suptitle('Before × After Preprocessing', fontweight='bold')
+    def _plot_preprocessing_example(self):
+        # 'after' normalizado p/ [0,1] só para exibição; treino usa [0,255].
+        img_orig = cv2.cvtColor(cv2.imread(self._sample_path), cv2.COLOR_BGR2RGB)
+        img_proc = self.preprocess_image(self._sample_path)  # [0,1] p/ display
+
+        print(f"\nPreprocessing example — shape: {img_proc.shape} | "
+              f"range: [{img_proc.min():.3f}, {img_proc.max():.3f}] "
+              f"(display only — training uses [0, 255] + internal preprocess layer)")
+
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+        axes[0].imshow(img_orig)
+        axes[0].set_title(f'Original\n{img_orig.shape[1]}×{img_orig.shape[0]}px')
+        axes[0].axis('off')
+        axes[1].imshow(img_proc)
+        axes[1].set_title(
+            f'Resized (display, [0,1])\n{self.target_size[1]}×{self.target_size[0]}px\n'
+            f'Training input: [0,255] → preprocess layer inside model'
+        )
+        axes[1].axis('off')
+
+        plt.suptitle('Before × After Resize', fontweight='bold')
         plt.tight_layout()
         plt.savefig(f'{self.graphs_dir}/preprocessing_example.png',
                     dpi=150, bbox_inches='tight')
         plt.close()
 
-    # Augmentation
+    def _plot_equalization_example(self):
+        img_orig = cv2.cvtColor(cv2.imread(self._sample_path), cv2.COLOR_BGR2RGB)
+        img_hist = self.preprocess_image(self._sample_path, equalization='hist')
+        img_adap = self.preprocess_image(self._sample_path, equalization='adaptive')
 
-    def _configure_augmentation(self):
-        """
-        Defines two generators:
-        - train_datagen    : random transformations for training diversity.
-        - val_test_datagen : pass-through, for deterministic evaluation.
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        for ax, img, title in zip(axes,
+                                  [img_orig, img_hist, img_adap],
+                                  ['Original', 'Histogram Eq.', 'CLAHE']):
+            ax.imshow(img, cmap='gray' if img.ndim == 2 else None)
+            ax.set_title(title)
+            ax.axis('off')
 
-        Note on normalization:
-            These generators yield raw pixel values in [0, 255]. Architecture-
-            specific normalization (preprocess_input for ResNet/DenseNet/
-            EfficientNet) is applied INSIDE the model via the ArchPreprocessing
-            layer — see training.py::build_model. Do not add `rescale=1./255`
-            here; that would double-normalize and break EfficientNet entirely.
-        """
-        print("\nConfiguring Data Augmentation...")
+        plt.suptitle('Equalization Comparison', fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(f'{self.graphs_dir}/equalization_example.png',
+                    dpi=150, bbox_inches='tight')
+        plt.close()
 
-        self.train_datagen = ImageDataGenerator(
-            rotation_range     = 15,
-            width_shift_range  = 0.05,
-            height_shift_range = 0.05,
-            zoom_range         = 0.1,
-            horizontal_flip    = True,
-            brightness_range   = [0.85, 1.15],
-            fill_mode          = 'nearest'
+    def get_datagen_for_experiment(self, mode: str) -> ImageDataGenerator:
+        # Modos: 'baseline' | 'augmented' | 'hist' | 'adaptive'.
+        # SEM rescale: datagens entregam [0,255]; o modelo normaliza.
+        # preprocessing_function roda antes do rescale e deve retornar float32 [0,255].
+        if mode == 'baseline':
+            return ImageDataGenerator()
+
+        if mode == 'augmented':
+            return ImageDataGenerator(
+                rotation_range     = 15,
+                width_shift_range  = 0.05,
+                height_shift_range = 0.05,
+                zoom_range         = 0.1,
+                horizontal_flip    = True,
+                brightness_range   = [0.85, 1.15],
+                fill_mode          = 'nearest',
+            )
+
+        if mode == 'hist':
+            return ImageDataGenerator(
+                preprocessing_function=self._apply_hist_equalization,
+            )
+
+        if mode == 'adaptive':
+            return ImageDataGenerator(
+                preprocessing_function=self._apply_adaptive_equalization,
+            )
+
+        raise ValueError(
+            f"Unknown mode '{mode}'. "
+            "Choose from: 'baseline', 'augmented', 'hist', 'adaptive'."
         )
 
-        self.val_test_datagen = ImageDataGenerator()
-
-    def _plot_augmentation(self):
-        """
-        Visualizes augmentation examples.
-        The generator receives uint8 [0, 255] and applies rescale internally.
-        """
+    def _plot_augmentation_examples(self):
+        # Datagen augmented entrega [0,255]; divide por 255 antes do imshow.
         img_uint8       = cv2.cvtColor(cv2.imread(self._sample_path), cv2.COLOR_BGR2RGB)
-        sample_expanded = np.expand_dims(img_uint8, axis=0).astype(np.uint8)
+        sample_expanded = np.expand_dims(img_uint8, axis=0).astype(np.float32)
 
-        aug_gen = ImageDataGenerator(
-            rescale=1./255, rotation_range=15,
-            width_shift_range=0.05, height_shift_range=0.05,
-            zoom_range=0.1, horizontal_flip=True,
-            brightness_range=[0.85, 1.15], fill_mode='nearest'
-        )
+        aug_gen  = self.get_datagen_for_experiment('augmented')
+        aug_iter = aug_gen.flow(sample_expanded, batch_size=1)
 
         fig, axes = plt.subplots(2, 5, figsize=(16, 7))
         axes[0][0].imshow(img_uint8)
         axes[0][0].set_title('Original', fontweight='bold')
         axes[0][0].axis('off')
 
-        aug_iter = aug_gen.flow(sample_expanded, batch_size=1)
         for idx in range(1, 10):
-            aug_img  = next(aug_iter)[0]
+            aug_img  = next(aug_iter)[0] / 255.0  # saída [0,255] -> [0,1]
             row, col = divmod(idx, 5)
             axes[row][col].imshow(np.clip(aug_img, 0, 1))
             axes[row][col].set_title(f'Aug {idx}')
@@ -426,117 +427,58 @@ class DataPipeline:
                     dpi=150, bbox_inches='tight')
         plt.close()
 
-    # StratifiedKFold Split
-
     def _split_kfold(self):
-        """
-        Two-step split:
-
-        Step 1 — Holdout test set (stratified train_test_split):
-            `test_size` % of the total dataset is reserved as a fixed test set.
-            Separated BEFORE KFold — never participates in any fold,
-            ensuring the final evaluation is unbiased and independent.
-
-        Step 2 — StratifiedKFold on the remaining data:
-            The remaining (1 - test_size) is split into `n_splits` folds.
-            shuffle=True + random_state fixes the permutation for reproducibility.
-
-            Per fold k:
-              - train      : (n_splits - 1) parts  ≈ (1 - test_size) * (K-1)/K
-              - validation : 1 part                ≈ (1 - test_size) *    1/K
-
-            Example with n_splits=5, test_size=0.15:
-              - test       : 15%
-              - train      : 85% * 4/5 = 68%
-              - validation : 85% * 1/5 = 17%
-        """
-        print(f"\nSplitting with StratifiedKFold "
-              f"(n_splits={self.n_splits}, test_size={self.test_size}, "
-              f"random_state={self.random_state})...")
+        # 1) holdout estratificado de teste; 2) StratifiedKFold no restante (dev).
+        print(f"\nStratifiedKFold split "
+              f"(n_splits={self.n_splits}, test_size={self.test_size})...")
 
         X = self.df['path'].values
         y = self.df['label'].values
 
-        # Step 1: holdout test set
         X_dev, self.X_test, y_dev, self.y_test = train_test_split(
             X, y,
             test_size    = self.test_size,
             stratify     = y,
-            random_state = self.random_state
+            random_state = self.random_state,
         )
 
-        total = len(X)
-        print(f"\n  Holdout test : {len(self.X_test)} samples "
-              f"({len(self.X_test)/total*100:.1f}%)  "
-              f"→ {Counter(self.y_test)}")
+        print(f"\n  Test : {len(self.X_test)} samples "
+              f"({len(self.X_test) / len(X) * 100:.1f}%) → {Counter(self.y_test)}")
 
-        # Step 2: StratifiedKFold on the development set
-        skf = StratifiedKFold(
-            n_splits     = self.n_splits,
-            shuffle      = True,
-            random_state = self.random_state
-        )
-
+        skf        = StratifiedKFold(n_splits=self.n_splits, shuffle=True,
+                                     random_state=self.random_state)
         self.folds = []
-        print(f"\n  Folds on development set ({len(X_dev)} samples):\n")
 
+        print(f"\n  Folds on {len(X_dev)} dev samples:\n")
         for fold_idx, (train_idx, val_idx) in enumerate(skf.split(X_dev, y_dev), start=1):
-            fold = {
+            self.folds.append({
                 'fold'   : fold_idx,
                 'X_train': X_dev[train_idx],
                 'y_train': y_dev[train_idx],
                 'X_val'  : X_dev[val_idx],
                 'y_val'  : y_dev[val_idx],
-            }
-            self.folds.append(fold)
+            })
+            print(f"  Fold {fold_idx}: "
+                  f"train={len(train_idx)} {dict(Counter(y_dev[train_idx]))} | "
+                  f"val={len(val_idx)} {dict(Counter(y_dev[val_idx]))}")
 
-            c_train = Counter(y_dev[train_idx])
-            c_val   = Counter(y_dev[val_idx])
-            print(f"  Fold {fold_idx}:")
-            print(f"    train      : {len(train_idx):>6} samples  → {dict(c_train)}")
-            print(f"    validation : {len(val_idx):>6} samples  → {dict(c_val)}")
-
-    # Persistence
-
-    def _save_csv(self):
-        """
-        Saves folds and test set to CSV for reuse in the training step
-        without re-running the pipeline.
-
-        Columns: path | label | split | fold
-        fold = -1 for test set samples.
-        """
-        parts = [pd.DataFrame({
-            'path' : self.X_test,
-            'label': self.y_test,
-            'split': 'test',
-            'fold' : -1
-        })]
+    def _save_splits_csv(self):
+        # Salva folds + teste em CSV; fold=-1 marca o teste.
+        parts = [pd.DataFrame({'path': self.X_test, 'label': self.y_test,
+                                'split': 'test', 'fold': -1})]
 
         for f in self.folds:
-            parts.append(pd.DataFrame({
-                'path' : f['X_train'],
-                'label': f['y_train'],
-                'split': 'train',
-                'fold' : f['fold']
-            }))
-            parts.append(pd.DataFrame({
-                'path' : f['X_val'],
-                'label': f['y_val'],
-                'split': 'val',
-                'fold' : f['fold']
-            }))
+            parts.append(pd.DataFrame({'path': f['X_train'], 'label': f['y_train'],
+                                        'split': 'train', 'fold': f['fold']}))
+            parts.append(pd.DataFrame({'path': f['X_val'], 'label': f['y_val'],
+                                        'split': 'val', 'fold': f['fold']}))
 
         df_splits = pd.concat(parts, ignore_index=True)
-
-        save_path = os.path.join(self.base_path, '..', 'splits_dataset.csv')
+        save_path = 'splits_dataset.csv'
         df_splits.to_csv(save_path, index=False)
-        print(f"\nSplits saved to: {os.path.abspath(save_path)}")
 
+        print(f"\nSplits saved to: {os.path.abspath(save_path)}")
         summary = (df_splits[df_splits['fold'] != -1]
-                   .groupby(['fold', 'split'])
-                   .size()
-                   .reset_index(name='n'))
-        print("\n  Summary per fold:")
+                   .groupby(['fold', 'split']).size().reset_index(name='n'))
         print(summary.to_string(index=False))
-        print(f"\n  Test set: {len(self.X_test)} samples (fold = -1)")
+        print(f"Test set: {len(self.X_test)} samples")

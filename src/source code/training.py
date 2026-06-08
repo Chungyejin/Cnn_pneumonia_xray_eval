@@ -1,30 +1,25 @@
-# =============================================================================
-#  training.py — K-Fold Cross-Validation + Fine-Tuning
-#  Architectures: ResNet50V2 | DenseNet121 | EfficientNetB0
-# =============================================================================
+# training.py — K-Fold CV + fine-tuning em duas fases.
+# Arquiteturas: ResNet50V2 | DenseNet121 | EfficientNetB0.
+# Fase 1: só a cabeça (backbone congelado). Fase 2: últimas UNFREEZE_LAST camadas,
+# LR menor; BatchNorm fica sempre congelado (preserva estatísticas da ImageNet).
+# Datagens entregam [0,255] sem rescale; cada modelo normaliza na sua preprocess layer.
 
-import os, json
+import os
+
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-
 from tensorflow.keras import Model
-from tensorflow.keras.layers import (Input, GlobalAveragePooling2D, Dense,
-                                     Dropout, BatchNormalization, Layer)
-from tensorflow.keras.applications import ResNet50V2, DenseNet121, EfficientNetB0
-from tensorflow.keras.applications.resnet_v2    import preprocess_input as resnet_v2_preprocess
-from tensorflow.keras.applications.densenet     import preprocess_input as densenet_preprocess
-from tensorflow.keras.applications.efficientnet import preprocess_input as effnet_preprocess
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint, CSVLogger
+from tensorflow.keras.applications import DenseNet121, EfficientNetB0, ResNet50V2
+from tensorflow.keras.applications import densenet, efficientnet, resnet_v2
+from tensorflow.keras.callbacks import (CSVLogger, EarlyStopping,
+                                         ModelCheckpoint, ReduceLROnPlateau)
+from tensorflow.keras.layers import (BatchNormalization, Dense, Dropout,
+                                      GlobalAveragePooling2D)
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.utils import register_keras_serializable
+from sklearn.metrics import (accuracy_score, classification_report, f1_score,
+                              precision_score, recall_score)
 from sklearn.utils.class_weight import compute_class_weight
-from sklearn.metrics import (accuracy_score, precision_score, recall_score,
-                              f1_score, classification_report)
-
-from preprocessing import DataPipeline
-
-# Config
 
 SEED          = 42
 TARGET_SIZE   = (224, 224)
@@ -32,135 +27,107 @@ BATCH_SIZE    = 32
 MODELS_DIR    = 'outputs/models'
 LOGS_DIR      = 'outputs/logs'
 
-EPOCHS_P1     = 10    # head-only phase
-EPOCHS_P2     = 20    # fine-tuning phase
-UNFREEZE_LAST = 30    # backbone layers to unfreeze in phase 2
+EPOCHS_P1     = 10   # fase só-cabeça
+EPOCHS_P2     = 20   # fase de fine-tuning
+UNFREEZE_LAST = 30   # nº de camadas do backbone descongeladas na fase 2
 LR_P1         = 1e-3
 LR_P2         = 1e-5
 
-LABEL_MAP     = {'NORMAL': 0, 'PNEUMONIA': 1}
-CLASS_NAMES   = ['NORMAL', 'PNEUMONIA']
+# Keras atribui índices alfabéticos: NORMAL→0, PNEUMONIA→1. LABEL_MAP espelha isso.
+LABEL_MAP   = {'NORMAL': 0, 'PNEUMONIA': 1}
+CLASS_NAMES = ['NORMAL', 'PNEUMONIA']
+
 ARCHITECTURES = ['resnet50v2', 'densenet121', 'efficientnetb0']
 
 tf.random.set_seed(SEED)
 np.random.seed(SEED)
 
-for d in [MODELS_DIR, LOGS_DIR]:
-    os.makedirs(d, exist_ok=True)
+for _d in [MODELS_DIR, LOGS_DIR]:
+    os.makedirs(_d, exist_ok=True)
 
 
-# Architecture-specific preprocessing
-#
-# Each Keras Applications model expects a different input scale:
-#   - ResNet50V2     : preprocess_input rescales pixels from [0, 255] → [-1, 1].
-#   - DenseNet121    : preprocess_input applies ImageNet mean/std normalization.
-#   - EfficientNetB0 : has an internal Normalization layer expecting [0, 255]
-#                      (its preprocess_input is essentially a no-op).
-#
-# The previous pipeline applied a single `rescale=1./255` to all of them in the
-# ImageDataGenerator. That double-normalized EfficientNet (killing its gradients
-# and producing chance-level metrics) and used the wrong scale for ResNet/DenseNet.
-#
-# Solution: feed the generator raw images in [0, 255] and apply the architecture's
-# own preprocess_input as a layer INSIDE the model. This way the same generator
-# can be reused across all three architectures, and the saved model carries its
-# own preprocessing graph (safer for deployment).
+# Camadas de preprocess registradas (subclasses no lugar de Lambda) para que
+# load_model funcione no Keras 3 sem custom_objects.
 
-@register_keras_serializable(package='pneumonia')
-class ArchPreprocessing(Layer):
-    """
-    Wraps the per-architecture preprocess_input as a serializable Keras layer.
-
-    Using a registered Layer (instead of a Lambda) ensures that
-    `tf.keras.models.load_model` can rebuild the model without needing the
-    caller to pass `custom_objects`.
-    """
-
-    _FUNCS = {
-        'resnet50v2'    : resnet_v2_preprocess,
-        'densenet121'   : densenet_preprocess,
-        'efficientnetb0': effnet_preprocess,
-    }
-
-    def __init__(self, arch: str, **kwargs):
-        super().__init__(**kwargs)
-        if arch not in self._FUNCS:
-            raise ValueError(f"Unknown architecture '{arch}'. "
-                             f"Choose from: {list(self._FUNCS)}")
-        self.arch = arch
-
-    def call(self, inputs):
-        return self._FUNCS[self.arch](inputs)
-
-    def get_config(self):
-        config = super().get_config()
-        config.update({'arch': self.arch})
-        return config
+@tf.keras.utils.register_keras_serializable(package='pneumonia')
+class ResNetPreprocess(tf.keras.layers.Layer):
+    def call(self, x):
+        return resnet_v2.preprocess_input(x)
 
 
-# Model
+@tf.keras.utils.register_keras_serializable(package='pneumonia')
+class DenseNetPreprocess(tf.keras.layers.Layer):
+    def call(self, x):
+        return densenet.preprocess_input(x)
+
+
+@tf.keras.utils.register_keras_serializable(package='pneumonia')
+class EfficientNetPreprocess(tf.keras.layers.Layer):
+    def call(self, x):
+        return efficientnet.preprocess_input(x)
+
+
+# nome -> (classe do backbone, classe da preprocess layer)
+_ARCH_REGISTRY = {
+    'resnet50v2'    : (ResNet50V2,     ResNetPreprocess),
+    'densenet121'   : (DenseNet121,    DenseNetPreprocess),
+    'efficientnetb0': (EfficientNetB0, EfficientNetPreprocess),
+}
+
 
 def build_model(arch: str, freeze_base: bool = True) -> tuple:
-    """
-    Builds and returns the full model and a direct reference to the backbone.
+    # Retorna (model completo, base) — a base é guardada p/ descongelar na fase 2.
+    if arch not in _ARCH_REGISTRY:
+        raise ValueError(f"Unknown architecture '{arch}'. Choose from: {list(_ARCH_REGISTRY)}")
 
-    Architecture-specific preprocessing (preprocess_input) is applied as the
-    first layer of the model. This means the generator must feed raw pixel
-    values in [0, 255] — do NOT use `rescale=1./255` in the ImageDataGenerator.
-
-    Returns
-    -------
-    model : tf.keras.Model  — full model (preprocessing + backbone + custom head)
-    base  : tf.keras.Model  — backbone only (used later for unfreezing)
-    """
-    kwargs = dict(include_top=False, weights='imagenet', input_shape=(*TARGET_SIZE, 3))
-    bases  = {'resnet50v2': ResNet50V2, 'densenet121': DenseNet121, 'efficientnetb0': EfficientNetB0}
-
-    if arch not in bases:
-        raise ValueError(f"Unknown architecture '{arch}'. Choose from: {list(bases)}")
-
-    # Build the backbone separately so we can keep a direct reference for unfreezing.
-    base           = bases[arch](**kwargs)
+    backbone_cls, preprocess_cls = _ARCH_REGISTRY[arch]
+    base           = backbone_cls(include_top=False, weights='imagenet',
+                                  input_shape=(*TARGET_SIZE, 3))
     base.trainable = not freeze_base
 
-    # Functional pipeline: Input → arch-specific preprocess → backbone → head
-    inputs = Input(shape=(*TARGET_SIZE, 3), name='input_image')
-    x      = ArchPreprocessing(arch, name=f'preprocess_{arch}')(inputs)
-    x      = base(x)
-    x      = GlobalAveragePooling2D()(x)
-    x      = BatchNormalization()(x)
-    x      = Dense(256, activation='relu')(x)
-    x      = Dropout(0.4)(x)
-    x      = Dense(128, activation='relu')(x)
-    x      = Dropout(0.3)(x)
-    out    = Dense(1, activation='sigmoid')(x)
+    inputs = tf.keras.Input(shape=(*TARGET_SIZE, 3))
+    x      = preprocess_cls(name='preprocess')(inputs)  # registrada, serializa ok
+    x      = base(x, training=False)
+
+    x   = GlobalAveragePooling2D()(x)
+    x   = BatchNormalization()(x)
+    x   = Dense(256, activation='relu')(x)
+    x   = Dropout(0.4)(x)
+    x   = Dense(128, activation='relu')(x)
+    x   = Dropout(0.3)(x)
+    out = Dense(1, activation='sigmoid')(x)
 
     model = Model(inputs=inputs, outputs=out, name=arch)
-    return model, base  # return both so base can be used directly in unfreeze
+    return model, base
 
 
 def unfreeze_top_layers(base: tf.keras.Model, n: int = UNFREEZE_LAST) -> None:
-    """
-    Unfreezes the last `n` layers of the backbone. Modifies `base` in-place.
-    BatchNormalization layers are always kept frozen to preserve learned statistics.
-
-    Parameters
-    ----------
-    base : backbone model returned by build_model
-    n    : number of layers (from the end) to unfreeze
-    """
+    # Descongela as últimas n camadas do backbone; BN permanece congelado.
     base.trainable = True
 
-    for layer in base.layers[:len(base.layers) - n]:
+    for layer in base.layers[: len(base.layers) - n]:
         layer.trainable = False
+
     for layer in base.layers:
-        if isinstance(layer, tf.keras.layers.BatchNormalization):
+        if isinstance(layer, BatchNormalization):
             layer.trainable = False
 
 
-# Generator
+def load_trained_model(arch: str, weights_path: str) -> tf.keras.Model:
+    # Reconstrói arch e carrega checkpoint weights-only no formato TF (sem extensão:
+    # <weights_path>.index / .data-*). Não usar load_model: salvar o modelo completo
+    # serializa o config p/ JSON e falha no EfficientNet (Normalization com tensores).
+    # O formato TF restaura por grafo de objetos e lida com o backbone aninhado.
+    model, _ = build_model(arch, freeze_base=True)
+    # expect_partial(): o checkpoint carrega o estado do otimizador (Adam m/v, lr,
+    # iter) que não existe neste modelo de inferência sem compile; silencia os
+    # warnings de "unrestored values". Os pesos das camadas são restaurados normal.
+    model.load_weights(weights_path).expect_partial()
+    return model
+
 
 def make_generator(datagen, X, y, shuffle: bool = True):
+    # Ordem de classe: Keras indexa alfabeticamente -> NORMAL=0, PNEUMONIA=1.
     return datagen.flow_from_dataframe(
         dataframe   = pd.DataFrame({'filename': X, 'class': y}),
         x_col       = 'filename',
@@ -170,16 +137,30 @@ def make_generator(datagen, X, y, shuffle: bool = True):
         class_mode  = 'binary',
         batch_size  = BATCH_SIZE,
         shuffle     = shuffle,
-        seed        = SEED
+        seed        = SEED,
     )
 
 
-# Training
-
 def get_class_weights(y_train):
+    # Pesos balanceados para o desbalanceamento residual de classe.
     classes = np.unique(y_train)
     weights = compute_class_weight('balanced', classes=classes, y=y_train)
     return {LABEL_MAP[c]: w for c, w in zip(classes, weights)}
+
+
+class SanitizeLogs(tf.keras.callbacks.Callback):
+    # Converte cada valor de `logs` para float antes de CSVLogger/ModelCheckpoint.
+    # Sob TF 2.10 + DirectML alguns valores chegam como EagerTensor/array e quebram
+    # a serialização JSON/CSV desses callbacks.
+    def on_epoch_end(self, epoch, logs=None):
+        if not logs:
+            return
+        for key in list(logs.keys()):
+            value = logs[key]
+            if hasattr(value, 'numpy'):
+                value = value.numpy()
+            arr = np.asarray(value).reshape(-1)
+            logs[key] = float(arr[0]) if arr.size else 0.0
 
 
 def get_callbacks(arch: str, fold: int, phase: int, experiment: str = ''):
@@ -187,20 +168,27 @@ def get_callbacks(arch: str, fold: int, phase: int, experiment: str = ''):
     exp_logs   = f'{LOGS_DIR}/{experiment}'   if experiment else LOGS_DIR
     os.makedirs(exp_models, exist_ok=True)
     os.makedirs(exp_logs,   exist_ok=True)
+
     prefix = f'{exp_models}/{arch}_fold{fold}_phase{phase}'
     return [
+        # SanitizeLogs primeiro: limpa EagerTensor/array de `logs` antes do resto.
+        SanitizeLogs(),
         EarlyStopping(monitor='val_loss', patience=5 if phase == 1 else 8,
                       restore_best_weights=True, verbose=1),
         ReduceLROnPlateau(monitor='val_loss', factor=0.5,
                           patience=3 if phase == 1 else 5, min_lr=1e-7, verbose=1),
-        ModelCheckpoint(f'{prefix}_best.keras', monitor='val_loss',
-                        save_best_only=True, verbose=0),
-        CSVLogger(f'{exp_logs}/{arch}_fold{fold}_phase{phase}.csv')
+        # save_weights_only=True + caminho SEM extensão -> checkpoint formato TF
+        # (.index/.data-*), não HDF5. Evita falha de JSON (EfficientNet) e o erro
+        # "axes don't match array" do loader HDF5 com backbone aninhado no TF 2.10.
+        ModelCheckpoint(f'{prefix}_best', monitor='val_loss',
+                        save_best_only=True, save_weights_only=True, verbose=0),
+        CSVLogger(f'{exp_logs}/{arch}_fold{fold}_phase{phase}.csv'),
     ]
 
 
 def train_fold(arch: str, fold_data: dict, train_datagen, val_datagen,
                experiment: str = '') -> dict:
+    # Treina um fold em duas fases e devolve o necessário p/ avaliação.
     fold             = fold_data['fold']
     X_train, y_train = fold_data['X_train'], fold_data['y_train']
     X_val,   y_val   = fold_data['X_val'],   fold_data['y_val']
@@ -216,42 +204,59 @@ def train_fold(arch: str, fold_data: dict, train_datagen, val_datagen,
     print(f"  Class weights: {cw}")
 
     def compile_and_fit(model, lr, epochs, phase):
-        model.compile(Adam(lr), 'binary_crossentropy',
-                      metrics=['accuracy',
-                               tf.keras.metrics.Precision(name='precision'),
-                               tf.keras.metrics.Recall(name='recall')])
-        return model.fit(train_gen, steps_per_epoch=steps_tr,
-                         validation_data=val_gen, validation_steps=steps_val,
-                         epochs=epochs, class_weight=cw,
-                         callbacks=get_callbacks(arch, fold, phase, experiment), verbose=1)
+        model.compile(
+            optimizer = Adam(lr),
+            loss      = 'binary_crossentropy',
+            metrics   = ['accuracy',
+                          tf.keras.metrics.Precision(name='precision'),
+                          tf.keras.metrics.Recall(name='recall')],
+        )
+        return model.fit(
+            train_gen,
+            steps_per_epoch  = steps_tr,
+            validation_data  = val_gen,
+            validation_steps = steps_val,
+            epochs           = epochs,
+            class_weight     = cw,
+            callbacks        = get_callbacks(arch, fold, phase, experiment),
+            verbose          = 1,
+        )
 
     print(f"\n  [Phase 1] Head only — LR={LR_P1}")
-    model, base = build_model(arch, freeze_base=True)  # keep direct reference to backbone
-    hist1 = compile_and_fit(model, LR_P1, EPOCHS_P1, phase=1)
+    model, base = build_model(arch, freeze_base=True)
+    hist1       = compile_and_fit(model, LR_P1, EPOCHS_P1, phase=1)
 
     print(f"\n  [Phase 2] Fine-tuning — LR={LR_P2}")
-    unfreeze_top_layers(base)                           # unfreeze via direct reference
+    unfreeze_top_layers(base)
     hist2 = compile_and_fit(model, LR_P2, EPOCHS_P2, phase=2)
 
-    return dict(fold=fold, arch=arch, model=model,
-                history_p1=hist1.history, history_p2=hist2.history,
-                val_gen=val_gen, y_val=y_val)
+    return dict(
+        fold       = fold,
+        arch       = arch,
+        model      = model,
+        history_p1 = hist1.history,
+        history_p2 = hist2.history,
+        val_gen    = val_gen,
+        y_val      = y_val,
+    )
 
-
-# Evaluation
 
 def predict(model, gen, y_true, threshold=0.5):
+    # gen com shuffle=False -> ordem casa com y_true. Fatia y_prob p/ descartar
+    # padding do último batch (menor).
     n_steps    = int(np.ceil(len(y_true) / gen.batch_size))
     gen.reset()
     y_prob     = model.predict(gen, steps=n_steps, verbose=0).flatten()
+    y_prob     = y_prob[:len(y_true)]
     y_pred     = (y_prob >= threshold).astype(int)
-    y_true_int = np.array([LABEL_MAP[l] for l in y_true])
+    y_true_int = np.array([LABEL_MAP[lbl] for lbl in y_true])
     return y_true_int, y_pred
 
 
 def compute_metrics(y_true, y_pred, fold, arch) -> dict:
     return {
-        'fold': fold, 'arch': arch,
+        'fold'              : fold,
+        'arch'              : arch,
         'accuracy'          : accuracy_score (y_true, y_pred),
         'precision_macro'   : precision_score(y_true, y_pred, average='macro',    zero_division=0),
         'recall_macro'      : recall_score   (y_true, y_pred, average='macro',    zero_division=0),
