@@ -7,7 +7,14 @@ graphs/
 # CSV de splits (gerado pelo pipeline)
 splits_dataset.csv
 
+# modelos treinados (muito grandes para o repositório)
 outputs/models/
+
+# logs — ignorar tudo, exceto cv_metrics*
+outputs/logs/**
+!outputs/logs/graphs
+!outputs/logs/**/
+!outputs/logs/**/cv_metrics*
 
 # Python
 __pycache__/
