@@ -125,6 +125,48 @@ The pipeline runs in two contexts:
 
 ---
 
+## Results
+
+> These are **5-fold cross-validation** metrics (mean ± standard deviation of `f1_macro` across the 5 validation folds). They are **not** holdout test-set results. Accuracy tracked `f1_macro` very closely (within ≈0.002 in every cell), so only `f1_macro` is shown below.
+
+### Context A — full dataset (augmentation effect)
+
+| Architecture | Baseline | Augmented |
+|---|---|---|
+| ResNet50V2 | 0.864 ± 0.004 | 0.875 ± 0.005 |
+| DenseNet121 | 0.868 ± 0.003 | 0.862 ± 0.003 |
+| EfficientNetB0 | 0.864 ± 0.007 | 0.870 ± 0.006 |
+
+Augmentation produced a small improvement for ResNet50V2 and EfficientNetB0 and a slight decrease for DenseNet121.
+
+### Context B — 20% stratified sample (equalization effect)
+
+| Architecture | Baseline | Histogram Eq. | CLAHE |
+|---|---|---|---|
+| ResNet50V2 | 0.851 ± 0.021 | 0.844 ± 0.018 | 0.829 ± 0.023 |
+| DenseNet121 | 0.852 ± 0.019 | 0.847 ± 0.019 | 0.836 ± 0.023 |
+| EfficientNetB0 | 0.845 ± 0.011 | 0.838 ± 0.028 | 0.833 ± 0.020 |
+
+Both equalization methods reduced `f1_macro` relative to the sample baseline for all three architectures, with CLAHE the lowest. (Context A and Context B are not directly comparable, as they use different amounts of training data.)
+
+### Statistical tests (α = 0.05)
+
+| Test | Comparison | Statistic | p-value | Significant |
+|---|---|---|---|---|
+| Friedman | Architectures (Context A) | 2.80 | 0.247 | No |
+| Friedman | Equalization — ResNet50V2 (Context B) | 8.40 | 0.015 | Yes (\*) |
+| Friedman | Equalization — DenseNet121 (Context B) | 3.60 | 0.165 | No |
+| Friedman | Equalization — EfficientNetB0 (Context B) | 0.74 | 0.692 | No |
+| Wilcoxon | Baseline vs Augmented — ResNet50V2 | 0.00 | 0.063 | No |
+| Wilcoxon | Baseline vs Augmented — DenseNet121 | 0.00 | 0.063 | No |
+| Wilcoxon | Baseline vs Augmented — EfficientNetB0 | 5.00 | 0.625 | No |
+
+Among the tested comparisons, only the equalization effect on ResNet50V2 reached significance.
+
+> **Note on the Wilcoxon tests:** with only 5 paired folds, the two-sided signed-rank test cannot return a p-value below 0.0625, so it can never cross the 0.05 threshold regardless of effect size. The "not significant" augmentation results therefore reflect limited statistical power, not necessarily the absence of an effect.
+
+---
+
 ## Credits
 
 Authors: Ana Flávia Martins Dos Santos; Isabella Vanderlinde Berkembrock; Michele Cristina Otta; Yejin Chung
