@@ -1,0 +1,7 @@
+label,method,mean,std
+NORMAL,adaptive,61.4,8.133
+NORMAL,hist,75.903,2.585
+NORMAL,original,59.174,10.248
+PNEUMONIA,adaptive,57.547,8.238
+PNEUMONIA,hist,75.467,2.513
+PNEUMONIA,original,55.345,9.592
