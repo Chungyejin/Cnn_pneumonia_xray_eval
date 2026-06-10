@@ -1,8 +1,0 @@
-test,context,group_a,group_b,stat,p_value,significant,sig_level,note
-Friedman,architecture_comparison,resnet50v2 vs densenet121 vs efficientnetb0,,2.8,0.246597,False,ns,H0: no difference between architectures
-Friedman,preprocessing_resnet50v2,baseline_sample vs hist_sample vs adaptive_sample,,8.4,0.014996,True,*,H0: no difference between preprocessing methods
-Friedman,preprocessing_densenet121,baseline_sample vs hist_sample vs adaptive_sample,,3.6,0.165299,False,ns,H0: no difference between preprocessing methods
-Friedman,preprocessing_efficientnetb0,baseline_sample vs hist_sample vs adaptive_sample,,0.7368,0.691826,False,ns,H0: no difference between preprocessing methods
-Wilcoxon,augmentation_resnet50v2,baseline,augmented,0.0,0.0625,False,ns,H0: no difference between baseline and augmented
-Wilcoxon,augmentation_densenet121,baseline,augmented,0.0,0.0625,False,ns,H0: no difference between baseline and augmented
-Wilcoxon,augmentation_efficientnetb0,baseline,augmented,5.0,0.625,False,ns,H0: no difference between baseline and augmented
