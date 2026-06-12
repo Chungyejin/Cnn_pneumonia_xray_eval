@@ -18,7 +18,7 @@ Only the NORMAL and PNEUMONIA categories are considered.
 
 1. **Chest X-Ray Images (Pneumonia)**
    - **Source:** *Chest X-Ray Images (Pneumonia)* (Kaggle)
-   - **Size:** 5,863 images
+   - **Size:** 5,856 images
    - **Access:** <https://www.kaggle.com/datasets/paultimothymooney/chest-xray-pneumonia>
 
 2. **ChestX-ray8**
@@ -28,7 +28,7 @@ Only the NORMAL and PNEUMONIA categories are considered.
 
 3. **COVID-19 Image Data Collection**
    - **Source:** *COVID-19 image data collection* (IEEE)
-   - **Size:** 764 images
+   - **Size:** 764 images after filtering (746 PNEUMONIA + 18 Normal), from a dataset of ~950 total samples across all diagnostic categories
    - **Access:** <https://github.com/ieee8023/covid-chestxray-dataset>
 
 > **Balancing note:** the NORMAL class from ChestX-ray8 is capped at 5,000 samples (`chestxray8_normal_cap`) to avoid skewing the unified dataset. Residual class imbalance is handled via `class_weight` during training.
@@ -91,6 +91,7 @@ Full dependency list is in `requirements.txt` (OpenCV, NumPy, pandas, scikit-lea
 - `EarlyStopping` (restore best weights) and `ReduceLROnPlateau` on `val_loss`.
 - Class imbalance handled per fold via balanced `class_weight`.
 - Each architecture normalizes inputs through its own registered preprocessing layer; data generators deliver raw `[0, 255]` images (no rescale).
+- Augmentation and equalization are applied **to training images only**; validation and test always use the original images.
 
 **Experiments (as implemented)**
 
