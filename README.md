@@ -1,9 +1,5 @@
 # Evaluation of CNN Architectures for Pneumonia Classification in Chest X-Ray Images
 
-Applied deep learning project for binary classification of **pneumonia** in chest X-ray images, comparing ResNet, DenseNet, and EfficientNet architectures.
-
----
-
 ## Motivation
 
 Pneumonia remains a major public health concern, demanding rapid and precise diagnosis for effective treatment and to prevent complications. Deep learning-based diagnostic support systems have shown strong potential for accelerating and standardizing clinical screening.
