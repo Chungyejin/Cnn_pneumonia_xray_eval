@@ -128,9 +128,16 @@ Context A: 데이터 증강 효과 비교 (Wilcoxon 부호순위 검정)
 📈 Results (실험 결과)
 아래 수치는 5-Fold 교차 검증의 검증 폴드에서 측정된 f1_macro 메트릭의 평균 ± 표준편차(mean ± std)입니다. (Holdout Test-set 결과가 아님. 모든 셀에서 Accuracy 수치가 f1_macro와 ±0.002 이내로 매우 유사하여 f1_macro만 표기함)
 
+Context A — Full Dataset (Augmentation Effect)
+|Architecture|Baseline|Augmented|
+| :--- | :--- | :---: |
+|ResNet50V2|0.864 ± 0.004|0.875 ± 0.005|
+|DenseNet121|0.868 ± 0.003|0.862 ± 0.003|
+|EfficientNetB0|0.864 ± 0.007|0.870 ± 0.006|
 
+데이터 증강 적용 시 ResNet50V2와 EfficientNetB0는 소폭의 성능 향상을 보였으나, DenseNet121에서는 약간의 성능 감소가 나타났습니다.
 
-
+Context B — 20% Stratified Sample (Equalization Effect)
 
 
 
