@@ -138,7 +138,7 @@ Context A: 데이터 증강 효과 비교 (Wilcoxon 부호순위 검정)
 데이터 증강 적용 시 ResNet50V2와 EfficientNetB0는 소폭의 성능 향상을 보였으나, DenseNet121에서는 약간의 성능 감소가 나타났습니다.
 
 #### Context B — 20% Stratified Sample (Equalization Effect)
-|Architecture|Baseline|Histogram Eq.|CLAHE
+|Architecture|Baseline|Histogram Eq.|CLAHE|
 | :--- | :--- | :---: |:---: |
 |ResNet50V2|0.851 ± 0.021|0.844 ± 0.018|0.829 ± 0.023|
 |DenseNet121|0.852 ± 0.019|0.847 ± 0.019|0.836 ± 0.023|
@@ -148,9 +148,19 @@ Context A: 데이터 증강 효과 비교 (Wilcoxon 부호순위 검정)
 
 #### Statistical Tests (α = 0.05)
 
+|Test|Comparison|Statistic|p-value|Significant|
+| :--- | :--- | :---: |:---: |:---: |
+|Friedman|Architectures (Context A)|2.80|0.247|No|
+|Friedman|Equalization — ResNet50V2 (Context B)|8.40|0.015|Yes (*)|
+|Friedman|Equalization — DenseNet121 (Context B)|3.60|0.165|No|
+|Friedman|Equalization — EfficientNetB0 (Context B)|0.74|0.692|No|
+|Wilcoxon|Baseline vs Augmented — ResNet50V2|0.00|0.063|No|
+|Wilcoxon|Baseline vs Augmented — DenseNet121|0.00|0.063|No|
+Wilcoxon,Baseline vs Augmented — EfficientNetB0,5.00,0.625,No
+
 Note on Wilcoxon Tests: > 5개의 검증 폴드(N=5)로 수행되는 2선택 대응 표본 Wilcoxon 부호순위 검정 구조상 이론적으로 산출 가능한 최소 p-value는 0.0625입니다. 따라서 효과 크기와 관계없이 유의수준 0.05 기준을 구조적으로 넘을 수 없어 "유의하지 않음" 결과가 나왔으며, 이는 데이터 증강 효과의 부재를 의미하기보다 제한된 통계적 검정력(Statistical Power)에 기인한 것입니다.
 
-👥 Credits (팀원 및 소속)
+## 👥 Credits (팀원 및 소속)
 Authors: Ana Flávia Martins Dos Santos, Isabella Vanderlinde Berkembrock, Michele Cristina Otta, Yejin Chung
 
 Affiliation: PUCPR — Pontifícia Universidade Católica do Paraná (Curitiba, Brazil)
