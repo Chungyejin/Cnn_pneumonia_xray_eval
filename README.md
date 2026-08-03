@@ -95,11 +95,8 @@ Fold별로 계산된 class_weight를 적용하여 클래스 불균형 보정
 | Context A | baseline | No |No |Full Dataset|
 | Context A | augmented | Yes |No |Full Dataset|
 | Context B | baseline_sample | No |No |Stratified Sample|
-
-
-
-Context B,hist_sample,No,Global Histogram,20% Stratified Sample
-Context B,adaptive_sample,No,Adaptive (CLAHE),20% Stratified Sample
+| Context B | hist_sample | No |Global Histogram |20 % Stratified Sample|
+| Context B | adaptive_sample | No |Adaptive (CLAHE) |20 % Stratified Sample|
 
 - Context A: 전체 데이터셋 대상 데이터 증강의 독립적 효과 검증
 
