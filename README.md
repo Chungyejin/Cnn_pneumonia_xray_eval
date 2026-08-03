@@ -67,7 +67,7 @@ python src/test_env.py
 │   └── test_env.py           # DirectML GPU-selection diagnostic
 └── requirements.txt          # Project dependencies
 ```ies
-
+```
 ## 🔬 Methodology (연구 방법론)
 ### 1. Data Splitting (데이터 분할)
 전체 데이터의 15%를 Stratified 방식으로 사전 분리하여 고정 홀드아웃 테스트셋(Holdout Test Set)으로 보존합니다.
