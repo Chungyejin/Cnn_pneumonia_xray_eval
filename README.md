@@ -1,170 +1,66 @@
-# Evaluation of CNN Architectures for Pneumonia Classification in Chest X-Ray Images
+# 🫁 Evaluation of CNN Architectures for Pneumonia Classification in Chest X-Ray Images
 
-## Motivation
+![Python](https://img.shields.io/badge/Python-3.10-3776AB?style=flat&logo=python&logoColor=white)
+![TensorFlow](https://img.shields.io/badge/TensorFlow-2.10.0-FF6F00?style=flat&logo=tensorflow&logoColor=white)
+![DirectML](https://img.shields.io/badge/DirectML-GPU_Accelerated-0078D4?style=flat)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
 
-Pneumonia remains a major public health concern, demanding rapid and precise diagnosis for effective treatment and to prevent complications. Deep learning-based diagnostic support systems have shown strong potential for accelerating and standardizing clinical screening.
-
-This project evaluates three well-established CNN architectures — **ResNet50V2**, **DenseNet121**, and **EfficientNetB0** — for binary classification (NORMAL × PNEUMONIA), studying two factors separately: the effect of **data augmentation** (on the full dataset) and the effect of **histogram-based contrast equalization** (on a stratified 20% sample).
-
----
-
-## Dataset
-
-Only the NORMAL and PNEUMONIA categories are considered.
-
-1. **Chest X-Ray Images (Pneumonia)**
-   - **Source:** *Chest X-Ray Images (Pneumonia)* (Kaggle)
-   - **Size:** 5,856 images
-   - **Access:** <https://www.kaggle.com/datasets/paultimothymooney/chest-xray-pneumonia>
-
-2. **ChestX-ray8**
-   - **Source:** *ChestX-ray8* — National Institute of Health (NIH)
-   - **Size:** 62,353 images
-   - **Access:** <https://arxiv.org/abs/1705.02315>
-
-3. **COVID-19 Image Data Collection**
-   - **Source:** *COVID-19 image data collection* (IEEE)
-   - **Size:** 764 images after filtering (746 PNEUMONIA + 18 Normal), from a dataset of ~950 total samples across all diagnostic categories
-   - **Access:** <https://github.com/ieee8023/covid-chestxray-dataset>
-
-> **Balancing note:** the NORMAL class from ChestX-ray8 is capped at 5,000 samples (`chestxray8_normal_cap`) to avoid skewing the unified dataset. Residual class imbalance is handled via `class_weight` during training.
-
-> The datasets are not committed to the repository. The pipeline expects them under a `datasets/` directory, with class inferred from folder names containing `NORMAL` or `PNEUMONIA`.
+> **PUCPR (Pontifícia Universidade Católica do Paraná)** 학부 연구/프로젝트  
+> 흉부 X-ray 영상을 활용한 폐렴 이진 분류(NORMAL × PNEUMONIA)에서 **CNN 아키텍처**, **데이터 증강(Augmentation)**, **명암비 균일화(Equalization)**의 효과를 통계적으로 비교·분석한 연구 프로젝트입니다.
 
 ---
 
-## Environment
+## 📌 Motivation
+폐렴은 신속하고 정확한 진단이 필수적인 공중보건 과제입니다. 본 연구에서는 딥러닝 기반의 진단 보조 시스템 가능성을 탐색하기 위해 대표적인 CNN 아키텍처 3종(**ResNet50V2**, **DenseNet121**, **EfficientNetB0**)을 바탕으로 다음 두 가지 요인을 독립적으로 평가했습니다.
 
-The project was developed for **Windows + Python 3.10**, with GPU acceleration through **DirectML** (tested on an RTX 4050).
+1. **Context A:** 전체 데이터셋 대상 **Data Augmentation**의 성능 영향 분석
+2. **Context B:** 20% Stratified Sample 대상 **Contrast Equalization (Histogram & CLAHE)**의 성능 영향 분석
 
-- `tensorflow-cpu==2.10.0` provides the base; the GPU is enabled via the DirectML plugin.
-- Adapter selection is done with the `DML_VISIBLE_DEVICES` environment variable, set **before** importing TensorFlow (see `main.py` / `test_env.py`).
-- Run `test_env.py` standalone to confirm which adapter the chosen index selects before training.
+---
 
-Install dependencies with:
+## 📊 Datasets
+본 프로젝트는 **NORMAL**과 **PNEUMONIA** 클래스만을 활용합니다.
+
+| Dataset | Source | Samples | Link |
+| :--- | :--- | :---: | :---: |
+| **Chest X-Ray Images** | Kaggle | 5,856 | [Kaggle Dataset](https://www.kaggle.com/datasets/paultimothymooney/chest-xray-pneumonia) |
+| **ChestX-ray8** | NIH | 62,353 | [arXiv:1705.02315](https://arxiv.org/abs/1705.02315) |
+| **COVID-19 Image Data** | IEEE | 764 (Filtered) | [GitHub Repository](https://github.com/ieee8023/covid-chestxray-dataset) |
+
+* **Class Balancing:** 데이터 편향을 방지하기 위해 ChestX-ray8의 `NORMAL` 클래스는 최대 5,000장으로 캡핑(`chestxray8_normal_cap`) 처리했으며, 잔여 불균형은 학습 시 `class_weight`로 보정했습니다.
+* **Directory Structure:** 데이터셋은 보안 및 용량 문제로 Git에 포함되지 않으며, `datasets/` 하위 디렉터리에 위치해야 합니다.
+
+---
+
+## ⚙️ Environment & Setup
+
+- **OS:** Windows + Python 3.10
+- **Acceleration:** DirectML (Tested on NVIDIA RTX 4050)
+- **Framework:** `tensorflow-cpu==2.10.0` + `tensorflow-directml`
 
 ```bash
+# Clone Repository
+git clone [https://github.com/your-username/your-repo-name.git](https://github.com/your-username/your-repo-name.git)
+cd your-repo-name
+
+# Install Dependencies
 pip install -r requirements.txt
-```
 
-Full dependency list is in `requirements.txt` (OpenCV, NumPy, pandas, scikit-learn, matplotlib, SciPy, scikit-posthocs).
+# Verify DirectML GPU Adapter
+python src/test_env.py
 
 ---
 
-## Repository structure
-
-```
-.
-├── outputs/                  # Experiment outputs (created at runtime)
-│   ├── graphs/               # EDA distributions, augmentation/preprocessing examples,
-│   │                         # contrast & intensity diagnostics, Grad-CAM, statistical plots
-│   ├── logs/                 # Per-experiment cv_metrics.csv / test_metrics.csv|json + Keras logs
-│   └── models/               # Trained checkpoints (TF weights-only format)
+## 📁 Repository Structure
+Plaintext
+├── outputs/                  # 런타임 결과물 (EDA, Grad-CAM, Metrics, Weights)
+│   ├── graphs/               # 분포, 증강 예시, Grad-CAM, 통계 검정 시각화
+│   ├── logs/                 # Keras 및 CV Metrics (CSV/JSON)
+│   └── models/               # Checkpoint 모델 가중치 (.ckpt)
 ├── src/
-│   ├── main.py               # Pipeline orchestration: Context A/B, metric re-extraction, Grad-CAM
-│   ├── preprocessing.py      # DataPipeline: load, EDA, clean, balance, split, datagens
-│   ├── training.py           # K-Fold CV + two-phase fine-tuning; fold/test evaluation
-│   ├── analysis.py           # Diagnostics, Grad-CAM, statistical tests
-│   └── test_env.py           # DirectML GPU-selection diagnostic
-└── requirements.txt          # Project dependencies
-```
-
-> Note: the exact `src/` layout above reflects the source modules in this project; adjust the path prefix if your local tree differs.
-
----
-
-## Methodology
-
-**Data splitting**
-- 15% reserved as a fixed stratified holdout test set (separated before any fold).
-- Remaining 85% split via `StratifiedKFold` with K=5.
-- Per fold: ~68% train | ~17% validation | 15% test.
-
-**Training**
-- Transfer learning with ImageNet weights, in **two phases per fold**:
-  - *Phase 1:* train only the classifier head (backbone frozen), LR = 1e-3.
-  - *Phase 2:* fine-tune the last `UNFREEZE_LAST` (30) backbone layers, LR = 1e-5; `BatchNormalization` stays frozen to preserve ImageNet statistics.
-- `EarlyStopping` (restore best weights) and `ReduceLROnPlateau` on `val_loss`.
-- Class imbalance handled per fold via balanced `class_weight`.
-- Each architecture normalizes inputs through its own registered preprocessing layer; data generators deliver raw `[0, 255]` images (no rescale).
-- Augmentation and equalization are applied **to training images only**; validation and test always use the original images.
-
-**Experiments (as implemented)**
-
-The pipeline runs in two contexts:
-
-| Context | Experiment (code name) | Augmentation | Equalization | Dataset |
-|---|---|---|---|---|
-| A | `baseline`         | No  | No                | Full |
-| A | `augmented`        | Yes | No                | Full |
-| B | `baseline_sample`  | No  | No                | 20% stratified sample |
-| B | `hist_sample`      | No  | Global histogram  | 20% stratified sample |
-| B | `adaptive_sample`  | No  | Adaptive (CLAHE)  | 20% stratified sample |
-
-> Context A isolates the **augmentation** effect on the full dataset; Context B isolates the **equalization** effect on a 20% stratified sample. Equalization and augmentation are evaluated separately (the equalization experiments do not apply augmentation).
-
-**Augmentation applied** (when active): ±15° rotation, ±5% horizontal/vertical shift, ±10% zoom, horizontal flip, brightness in `[0.85, 1.15]` (≈ ±15%), `fill_mode='nearest'`.
-
-**Equalization**
-- *Histogram:* global histogram equalization (`cv2.equalizeHist`).
-- *CLAHE:* adaptive equalization (`clipLimit=2.0`, `tileGridSize=(8, 8)`).
-
----
-
-## Analysis
-
-- **Diagnostics:** per-class contrast (pixel std) and mean intensity distributions, before and after each equalization method.
-- **Grad-CAM:** model-attention heatmaps comparing original vs. equalized inputs.
-- **Statistical tests:**
-  - Architecture comparison (Friedman, with Nemenyi post-hoc) — Context A.
-  - Preprocessing/equalization effect (Friedman, with Nemenyi post-hoc) — Context B.
-  - Augmentation effect (Wilcoxon signed-rank) — Context A.
-
----
-
-## Results
-
-> These are **5-fold cross-validation** metrics (mean ± standard deviation of `f1_macro` across the 5 validation folds). They are **not** holdout test-set results. Accuracy tracked `f1_macro` very closely (within ≈0.002 in every cell), so only `f1_macro` is shown below.
-
-### Context A — full dataset (augmentation effect)
-
-| Architecture | Baseline | Augmented |
-|---|---|---|
-| ResNet50V2 | 0.864 ± 0.004 | 0.875 ± 0.005 |
-| DenseNet121 | 0.868 ± 0.003 | 0.862 ± 0.003 |
-| EfficientNetB0 | 0.864 ± 0.007 | 0.870 ± 0.006 |
-
-Augmentation produced a small improvement for ResNet50V2 and EfficientNetB0 and a slight decrease for DenseNet121.
-
-### Context B — 20% stratified sample (equalization effect)
-
-| Architecture | Baseline | Histogram Eq. | CLAHE |
-|---|---|---|---|
-| ResNet50V2 | 0.851 ± 0.021 | 0.844 ± 0.018 | 0.829 ± 0.023 |
-| DenseNet121 | 0.852 ± 0.019 | 0.847 ± 0.019 | 0.836 ± 0.023 |
-| EfficientNetB0 | 0.845 ± 0.011 | 0.838 ± 0.028 | 0.833 ± 0.020 |
-
-Both equalization methods reduced `f1_macro` relative to the sample baseline for all three architectures, with CLAHE the lowest. (Context A and Context B are not directly comparable, as they use different amounts of training data.)
-
-### Statistical tests (α = 0.05)
-
-| Test | Comparison | Statistic | p-value | Significant |
-|---|---|---|---|---|
-| Friedman | Architectures (Context A) | 2.80 | 0.247 | No |
-| Friedman | Equalization — ResNet50V2 (Context B) | 8.40 | 0.015 | Yes (\*) |
-| Friedman | Equalization — DenseNet121 (Context B) | 3.60 | 0.165 | No |
-| Friedman | Equalization — EfficientNetB0 (Context B) | 0.74 | 0.692 | No |
-| Wilcoxon | Baseline vs Augmented — ResNet50V2 | 0.00 | 0.063 | No |
-| Wilcoxon | Baseline vs Augmented — DenseNet121 | 0.00 | 0.063 | No |
-| Wilcoxon | Baseline vs Augmented — EfficientNetB0 | 5.00 | 0.625 | No |
-
-Among the tested comparisons, only the equalization effect on ResNet50V2 reached significance.
-
-> **Note on the Wilcoxon tests:** with only 5 paired folds, the two-sided signed-rank test cannot return a p-value below 0.0625, so it can never cross the 0.05 threshold regardless of effect size. The "not significant" augmentation results therefore reflect limited statistical power, not necessarily the absence of an effect.
-
----
-
-## Credits
-
-Authors: Ana Flávia Martins Dos Santos; Isabella Vanderlinde Berkembrock; Michele Cristina Otta; Yejin Chung
-Affiliation: PUCPR — Pontifícia Universidade Católica do Paraná (Curitiba, Brazil)
+│   ├── main.py               # 전체 파이프라인 오케스트레이션 (Context A/B)
+│   ├── preprocessing.py      # DataPipeline (Load, Clean, Balance, Split)
+│   ├── training.py           # Stratified K-Fold CV & 2-Phase Fine-Tuning
+│   ├── analysis.py           # Grad-CAM 및 Statistical Hypothesis Testing
+│   └── test_env.py           # DirectML GPU 선택 진단 스크립트
+└── requirements.txt
