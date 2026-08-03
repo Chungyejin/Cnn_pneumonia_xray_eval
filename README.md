@@ -52,7 +52,7 @@ python src/test_env.py
 ---
 
 ## 📁 Repository Structure
-Plaintext
+.
 ├── outputs/                  # 런타임 결과물 (EDA, Grad-CAM, Metrics, Weights)
 │   ├── graphs/               # 분포, 증강 예시, Grad-CAM, 통계 검정 시각화
 │   ├── logs/                 # Keras 및 CV Metrics (CSV/JSON)
