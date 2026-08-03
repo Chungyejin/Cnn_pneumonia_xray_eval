@@ -90,10 +90,14 @@ Fold별로 계산된 class_weight를 적용하여 클래스 불균형 보정
 데이터 증강 및 명암 대비 균일화는 학습 데이터에만 적용되며, 검증 및 테스트 데이터에는 항상 원본 이미지가 사용됩니다.
 
 ### 3. Experiments (실험 구성)
-Context,ContextExperiment (코드명),Augmentation,Equalization,Dataset
-Context A,baseline,No,No,Full Dataset
-Context A,augmented,Yes,No,Full Dataset
-Context B,baseline_sample,No,No,20% Stratified Sample
+| Context | ContextExperiment (코드명) | Augmentation | Equalization |Equalization |
+| :--- | :--- | :---: | :---: |:---:|
+| Context A | baseline | No |No |Full Dataset|
+| Context A | augmented | Yes |No |Full Dataset|
+| Context B | baseline_sample | No |No |Stratified Sample|
+
+
+
 Context B,hist_sample,No,Global Histogram,20% Stratified Sample
 Context B,adaptive_sample,No,Adaptive (CLAHE),20% Stratified Sample
 
