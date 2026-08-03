@@ -48,7 +48,7 @@ pip install -r requirements.txt
 
 # Verify DirectML GPU Adapter
 python src/test_env.py
-
+```
 ---
 
 ## 📁 Repository Structure
