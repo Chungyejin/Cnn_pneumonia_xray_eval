@@ -52,6 +52,7 @@ python src/test_env.py
 ---
 
 ## 📁 Repository Structure
+```
 .
 ├── outputs/                  # Experiment outputs (created at runtime)
 │   ├── graphs/               # EDA distributions, augmentation/preprocessing examples,
@@ -65,6 +66,7 @@ python src/test_env.py
 │   ├── analysis.py           # Diagnostics, Grad-CAM, statistical tests
 │   └── test_env.py           # DirectML GPU-selection diagnostic
 └── requirements.txt          # Project dependencies
+```ies
 
 ## 🔬 Methodology (연구 방법론)
 ### 1. Data Splitting (데이터 분할)
