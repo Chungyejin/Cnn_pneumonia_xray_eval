@@ -128,7 +128,7 @@ Context A: 데이터 증강 효과 비교 (Wilcoxon 부호순위 검정)
 📈 Results (실험 결과)
 아래 수치는 5-Fold 교차 검증의 검증 폴드에서 측정된 f1_macro 메트릭의 평균 ± 표준편차(mean ± std)입니다. (Holdout Test-set 결과가 아님. 모든 셀에서 Accuracy 수치가 f1_macro와 ±0.002 이내로 매우 유사하여 f1_macro만 표기함)
 
-Context A — Full Dataset (Augmentation Effect)
+#### Context A — Full Dataset (Augmentation Effect)
 |Architecture|Baseline|Augmented|
 | :--- | :--- | :---: |
 |ResNet50V2|0.864 ± 0.004|0.875 ± 0.005|
@@ -137,8 +137,12 @@ Context A — Full Dataset (Augmentation Effect)
 
 데이터 증강 적용 시 ResNet50V2와 EfficientNetB0는 소폭의 성능 향상을 보였으나, DenseNet121에서는 약간의 성능 감소가 나타났습니다.
 
-Context B — 20% Stratified Sample (Equalization Effect)
-
+#### Context B — 20% Stratified Sample (Equalization Effect)
+|Architecture|Baseline|Histogram Eq.|CLAHE
+| :--- | :--- | :---: |:---: |
+|ResNet50V2|0.851 ± 0.021|0.844 ± 0.018|0.829 ± 0.023|
+|DenseNet121|0.852 ± 0.019|0.847 ± 0.019|0.836 ± 0.023|
+|EfficientNetB0|0.845 ± 0.011|0.838 ± 0.028|0.833 ± 0.020|
 
 
 Note on Wilcoxon Tests: > 5개의 검증 폴드(N=5)로 수행되는 2선택 대응 표본 Wilcoxon 부호순위 검정 구조상 이론적으로 산출 가능한 최소 p-value는 0.0625입니다. 따라서 효과 크기와 관계없이 유의수준 0.05 기준을 구조적으로 넘을 수 없어 "유의하지 않음" 결과가 나왔으며, 이는 데이터 증강 효과의 부재를 의미하기보다 제한된 통계적 검정력(Statistical Power)에 기인한 것입니다.
