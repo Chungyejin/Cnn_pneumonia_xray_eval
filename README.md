@@ -1,10 +1,5 @@
 # 🫁 Evaluation of CNN Architectures for Pneumonia Classification in Chest X-Ray Images
 
-![Python](https://img.shields.io/badge/Python-3.10-3776AB?style=flat&logo=python&logoColor=white)
-![TensorFlow](https://img.shields.io/badge/TensorFlow-2.10.0-FF6F00?style=flat&logo=tensorflow&logoColor=white)
-![DirectML](https://img.shields.io/badge/DirectML-GPU_Accelerated-0078D4?style=flat)
-![License](https://img.shields.io/badge/License-MIT-green.svg)
-
 > **PUCPR (Pontifícia Universidade Católica do Paraná)** 학부 연구/프로젝트  
 > 흉부 X-ray 영상을 활용한 폐렴 이진 분류(NORMAL × PNEUMONIA)에서 **CNN 아키텍처**, **데이터 증강(Augmentation)**, **명암비 균일화(Equalization)**의 효과를 통계적으로 비교·분석한 연구 프로젝트입니다.
 
