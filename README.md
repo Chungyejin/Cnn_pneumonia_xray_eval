@@ -120,7 +120,7 @@ Context B: 전처리/균일화 효과 비교 (Friedman 검정 및 Nemenyi 후속
 
 Context A: 데이터 증강 효과 비교 (Wilcoxon 부호순위 검정)
 
-📈 Results (실험 결과)
+## 📈 Results (실험 결과)
 아래 수치는 5-Fold 교차 검증의 검증 폴드에서 측정된 f1_macro 메트릭의 평균 ± 표준편차(mean ± std)입니다. (Holdout Test-set 결과가 아님. 모든 셀에서 Accuracy 수치가 f1_macro와 ±0.002 이내로 매우 유사하여 f1_macro만 표기함)
 
 #### Context A — Full Dataset (Augmentation Effect)
